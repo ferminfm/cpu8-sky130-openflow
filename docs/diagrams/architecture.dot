@@ -1,0 +1,36 @@
+digraph cpu {
+  graph [rankdir=TB, fontname="Helvetica", fontsize=12, bgcolor="white", nodesep=0.3, ranksep=0.45, label="8-bit CPU (module top): data path and control", labelloc=t, fontsize=16];
+  node  [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=11, fillcolor="#eef3fb", color="#355c9a"];
+  edge  [fontname="Helvetica", fontsize=9, color="#444444"];
+
+  din [label="Inputs\ndin_1, din_2, din_3\n(8 bit each)", shape=parallelogram, fillcolor="#fff4d6", color="#b08000"];
+  cmd [label="cmdin [6:0]\n(instruction)", shape=parallelogram, fillcolor="#fff4d6", color="#b08000"];
+  muxA [label="mux4 A\nselect = cmdin[6:5]", shape=trapezium, fillcolor="#e9f7ef", color="#2e7d4f"];
+  muxB [label="mux4 B\nselect = cmdin[4:3]", shape=trapezium, fillcolor="#e9f7ef", color="#2e7d4f"];
+  regA [label="regbank_alu_A\n8-bit register", fillcolor="#f3e8fb", color="#7b3fa0"];
+  regB [label="regbank_alu_B\n8-bit register", fillcolor="#f3e8fb", color="#7b3fa0"];
+  regC [label="regbank_cmdin\n7-bit register", fillcolor="#f3e8fb", color="#7b3fa0"];
+  ctl  [label="control\nFSM: RST > FETCH >\nEXECUTE > STORE", fillcolor="#fde8e8", color="#b03030"];
+  alu  [label="ALU\nADD, SUB, MUL, DIV\n16-bit result,\nzero / error flags", shape=box3d, fillcolor="#e8f4fd", color="#1f6fb2"];
+  mem  [label="memory\n8 words x 16 bit\n(address = A)", shape=cylinder, fillcolor="#eef3fb"];
+  sel  [label="selmux2\nALU or memory", shape=trapezium, fillcolor="#e9f7ef", color="#2e7d4f"];
+  regO [label="regbank_dout\n16-bit register", fillcolor="#f3e8fb", color="#7b3fa0"];
+  regF [label="regbank_zero_error\n2-bit register", fillcolor="#f3e8fb", color="#7b3fa0"];
+  out  [label="Outputs\ndout_high, dout_low,\nzero, error, cpu_rdy", shape=parallelogram, fillcolor="#fff4d6", color="#b08000"];
+
+  din -> muxA; din -> muxB;
+  muxA -> regA; muxB -> regB;
+  cmd -> regC -> ctl;
+  regA -> alu [label="in1"]; regB -> alu [label="in2"];
+  regA -> mem [label="address"];
+  alu -> sel [label="alu_out"]; mem -> sel [label="memoryOutData"];
+  sel -> regO;
+  alu -> regF [label="zero, error"];
+  regO -> out; regF -> out;
+  regO -> mem [label="write data", style=dashed];
+  regO -> muxA [label="dout_high\n(feedback)", style=dashed, constraint=false, color="#888888"];
+  regO -> muxB [label="dout_low\n(feedback)", style=dashed, constraint=false, color="#888888"];
+  ctl -> alu [label="opcode", color="#b03030", fontcolor="#b03030", style=dotted];
+  ctl -> mem [label="read / write", color="#b03030", fontcolor="#b03030", style=dotted];
+  ctl -> sel [label="selmux2", color="#b03030", fontcolor="#b03030", style=dotted];
+}

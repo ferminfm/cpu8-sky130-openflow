@@ -1,0 +1,12 @@
+digraph fsm {
+  graph [rankdir=LR, fontname="Helvetica", label="Control FSM (control.sv): one instruction every 3 clock cycles", labelloc=t, fontsize=15, bgcolor="white"];
+  node [shape=circle, style=filled, fillcolor="#fde8e8", color="#b03030", fontname="Helvetica", fontsize=12, width=1.25, fixedsize=true];
+  edge [fontname="Helvetica", fontsize=10];
+  start [shape=point, width=0.15, fillcolor=black];
+  RST [label="RST\ncpu_rdy=1"]; FETCH [label="FETCH\nload A, B"]; EXECUTE [label="EXECUTE\nALU or\nmemory read"]; STORE [label="STORE\nmem. write\n(STORE op)\ncpu_rdy=1"];
+  start -> RST [label="rst"];
+  RST -> FETCH [label="clk"];
+  FETCH -> EXECUTE [label="clk"];
+  EXECUTE -> STORE [label="clk\n(result registered)"];
+  STORE -> FETCH [label="clk\n(next cmdin captured)"];
+}

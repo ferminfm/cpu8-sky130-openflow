@@ -1,0 +1,20 @@
+digraph flow {
+  graph [rankdir=TB, fontname="Helvetica", bgcolor="white", nodesep=0.25, ranksep=0.35, label="RTL-to-GDS flow used in this repository (all open source)", labelloc=t, fontsize=15];
+  node [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=10, fillcolor="#eef3fb", color="#355c9a", width=1.3];
+  edge [color="#555555"];
+  a [label="1. RTL\nSystemVerilog"];
+  b [label="2. Simulation\nIcarus, Verilator"];
+  c [label="3. Synthesis\nYosys + ABC"];
+  d [label="4. Floorplan\nOpenROAD"];
+  e [label="5. Power grid\nOpenROAD pdngen"];
+  f [label="6. Placement\nRePlAce + DPL"];
+  g [label="7. Clock tree\nTritonCTS"];
+  h [label="8. Routing\nFastRoute + TritonRoute"];
+  i [label="9. Extraction + STA\nOpenRCX, OpenSTA"];
+  j [label="10. Sign-off\nMagic, KLayout, Netgen"];
+  k [label="GDSII", shape=note, fillcolor="#fff4d6", color="#b08000"];
+  a -> b -> c -> d -> e -> f; f -> g; k -> j -> i -> h -> g [dir=back];
+  {rank=same; a; b; c; d; e; f}
+  {rank=same; k; j; i; h; g}
+
+}
