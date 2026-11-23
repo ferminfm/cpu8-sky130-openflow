@@ -665,7 +665,10 @@ The standard-cell picture is drawn from the sky130 library GDS in the PDK (Apach
 
 ## Credits
 
-Design and implementation: Fermín Franco (project lead) and Luis Alberto Burgos Acosta, M.Sc. (Facultad de Pedagogía e Innovación Educativa, Universidad Autónoma de Baja California, Mexicali).
+Design and implementation:
+
+- **Fermín Franco** (project lead): Ensenada Flow; Universidad Autónoma de Baja California (UABC).
+- **Luis Alberto Burgos Acosta, M.Sc.**: Ensenada Flow; Universidad Autónoma de Baja California (UABC), Facultad de Pedagogía e Innovación Educativa, Mexicali.
 
 ## License
 
