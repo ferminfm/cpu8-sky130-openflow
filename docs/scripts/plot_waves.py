@@ -1,4 +1,4 @@
-"""Render a VCD file to a PNG timing diagram (matplotlib). Usage: plot_waves.py in.vcd out.png title [t_end_ns]"""
+"""Render a VCD file to a PNG timing diagram (matplotlib). Usage: plot_waves.py in.vcd out.png title [t_end_ns [t_start_ns]]"""
 import sys, re
 import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -39,6 +39,7 @@ def val(v):
 def main():
     vcd, out, title = sys.argv[1], sys.argv[2], sys.argv[3]
     tend = float(sys.argv[4]) if len(sys.argv) > 4 else None
+    tmin = float(sys.argv[5]) if len(sys.argv) > 5 else 0.0
     s = parse_vcd(vcd)
     want = [("tb_cpu.clk","clk"),("tb_cpu.rst","rst"),("tb_cpu.cmdin","cmdin"),("tb_cpu.din_1","din_1"),("tb_cpu.din_2","din_2"),
             ("tb_cpu.dut.control_inst.state","FSM state"),("tb_cpu.cpu_rdy","cpu_rdy"),("tb_cpu.dout","dout"),("tb_cpu.zero","zero"),("tb_cpu.error","error")]
@@ -56,7 +57,9 @@ def main():
     for i, (k, lab) in enumerate(want):
         y = len(want) - 1 - i
         w, ch = s[k]
-        ch = [c for c in ch if c[0] <= tmax] or ch[:1]
+        before = [c for c in ch if c[0] <= tmin]
+        ch = ([(tmin, before[-1][1])] if before else []) + [c for c in ch if tmin < c[0] <= tmax]
+        ch = ch or [(tmin, "x")]
         pts = ch + [(tmax, ch[-1][1])]
         if w == 1:
             xs, ys = [], []
@@ -75,9 +78,9 @@ def main():
                 elif "dout" in lab: txt = f"0x{n:0{(w+3)//4}x}"
                 elif "cmdin" in lab: txt = f"{n:07b}"
                 else: txt = str(n)
-                if t1 - t0 > (tmax / 70): ax.text((t0 + t1) / 2, y + .4, txt, ha="center", va="center", fontsize=7)
-        ax.text(-tmax * 0.01, y + 0.4, lab, ha="right", va="center", fontsize=9, family="monospace")
-    ax.set_xlim(0, tmax); ax.set_ylim(-0.2, len(want)); ax.set_yticks([])
+                if t1 - t0 > ((tmax - tmin) / 70): ax.text((t0 + t1) / 2, y + .4, txt, ha="center", va="center", fontsize=7)
+        ax.text(tmin - (tmax - tmin) * 0.01, y + 0.4, lab, ha="right", va="center", fontsize=9, family="monospace")
+    ax.set_xlim(tmin, tmax); ax.set_ylim(-0.2, len(want)); ax.set_yticks([])
     ax.set_xlabel("time (ns)"); ax.set_title(title, fontsize=11)
     for sp in ["left", "right", "top"]: ax.spines[sp].set_visible(False)
     ax.grid(axis="x", color="#dddddd", lw=0.5)

@@ -12,19 +12,23 @@ This repository does not ship a foundry PDK or any proprietary files. The PDK is
 
 0. [The big picture](#0-the-big-picture)
 1. [The design: an 8-bit CPU](#1-the-design-an-8-bit-cpu)
-2. [RTL simulation: does the logic work?](#2-rtl-simulation-does-the-logic-work)
-3. [Synthesis: from code to logic gates](#3-synthesis-from-code-to-logic-gates)
-4. [Floorplan: how big is the chip?](#4-floorplan-how-big-is-the-chip)
-5. [Power grid: getting power to every cell](#5-power-grid-getting-power-to-every-cell)
-6. [Placement: where does each gate go?](#6-placement-where-does-each-gate-go)
-7. [Clock tree synthesis: one clock, everywhere at once](#7-clock-tree-synthesis-one-clock-everywhere-at-once)
-8. [Routing: drawing the wires](#8-routing-drawing-the-wires)
-9. [Fill and the final GDS](#9-fill-and-the-final-gds)
-10. [Sign-off: timing, power, DRC, LVS](#10-sign-off-timing-power-drc-lvs)
-11. [Results summary](#11-results-summary)
-12. [Try it yourself](#12-try-it-yourself)
-13. [How the figures were made](#13-how-the-figures-were-made)
-14. [Glossary](#14-glossary)
+2. [Verification: does the logic work?](#2-verification-does-the-logic-work)
+3. [Logic synthesis: from code to logic gates](#3-logic-synthesis-from-code-to-logic-gates)
+4. [Physical design: floorplan](#4-physical-design-floorplan)
+5. [Physical design: power grid](#5-physical-design-power-grid)
+6. [Physical design: placement](#6-physical-design-placement)
+7. [Physical design: clock tree synthesis (CTS)](#7-physical-design-clock-tree-synthesis-cts)
+8. [Physical design: routing](#8-physical-design-routing)
+9. [Physical design: fill and the final GDS](#9-physical-design-fill-and-the-final-gds)
+10. [Timing convergence: from synthesis to sign-off](#10-timing-convergence-from-synthesis-to-sign-off)
+11. [Sign-off: timing, power, DRC, LVS](#11-sign-off-timing-power-drc-lvs)
+12. [Design-space exploration (PPA)](#12-design-space-exploration-power-performance-and-area-ppa)
+13. [Summary](#13-summary)
+14. [Results tables](#14-results-tables)
+15. [Limitations, common errors and fixes](#15-limitations-common-errors-and-fixes)
+16. [Try it yourself](#16-try-it-yourself)
+17. [How the figures were made](#17-how-the-figures-were-made)
+18. [Glossary](#18-glossary)
 
 ---
 
@@ -85,7 +89,9 @@ For LOAD and STORE, the memory address is operand A.
 
 ---
 
-## 2. RTL simulation: does the logic work?
+## 2. Verification: does the logic work?
+
+### 2.1 The testbench and the waveforms
 
 **What it is.** A **testbench** ([`src/tb/tb_light.sv`](src/tb/tb_light.sv), [`src/tb/tb_nop.sv`](src/tb/tb_nop.sv)) drives the CPU's inputs, waits for the clock edges, and compares the outputs with expected values. For example, `ADD 10+20` must give `dout = 0x001e`, and `DIV 10/0` must give `error = 1`.
 
@@ -107,11 +113,42 @@ make sim   # Icarus and Verilator, on src/rtl and src/rtl_synth
 
 ![RTL waveform of tb_light: clk, rst, cmdin, operands, FSM state, cpu_rdy, dout, zero, error](docs/img/03_rtl_waveform.png)
 
+Zoom in on single instructions to see the three-cycle rhythm. ADD 10 + 20: the operands are loaded in FETCH, the result appears when EXECUTE ends, and `cpu_rdy` rises in STORE:
+
+![Zoom on ADD 10+20](docs/img/29_wave_add.png)
+
+DIV 10 / 0: the ALU refuses to divide by zero, so the result is `0xffff` and `error` goes to 1:
+
+![Zoom on DIV 10/0](docs/img/30_wave_div0.png)
+
 **Result:** `tb_light` passes 16/16 checks and `tb_nop` passes 19/19, on the original RTL and the synthesis copy, with both Icarus Verilog and Verilator 5.044.
 
 ---
 
-## 3. Synthesis: from code to logic gates
+### 2.2 How much can we trust the RTL?
+
+No test can prove that a design has no bugs. What you can do is stack up independent kinds of evidence:
+
+| Evidence | What it checks | Status in this repo |
+|---|---|---|
+| Self-checking testbenches | Every instruction's `dout`, `zero` and `error` against expected values; `cpu_rdy` at every FETCH, EXECUTE and STORE | 16/16 and 19/19 checks |
+| Two different simulators | That the result does not depend on one tool's interpretation of SystemVerilog | Icarus and Verilator agree |
+| Gate-level simulation | That synthesis and place-and-route did not change the behaviour | 35/35 on the final netlist (section 11.1) |
+| Formal equivalence | A mathematical proof that RTL and netlist match | Partial: 32 PASS, 19 UNKNOWN (section 11.7) |
+| Code coverage | Which lines, branches, toggles and FSM transitions the tests exercised | **Not measured yet** (see exercise 7) |
+
+To raise confidence further: measure coverage, add constrained-random stimulus, and add assertions that check the `cpu_rdy` protocol on every cycle.
+
+### 2.3 Findings while writing the tests
+
+- **`tb_light` covers the six real operations.** `tb_nop` adds the two NOP codes (`100`, `111`), which give `dout = 0xFFFF` and `error = 1`, and checks that memory keeps its value afterwards.
+- **LOAD sets `error = 1`.** During a LOAD's EXECUTE the ALU sees `nvalid_data = 1`, and the flags are still registered. The testbench expects this; it is a design choice worth knowing.
+- **STORE does not change `dout`,** and the memory write takes effect when the FSM leaves STORE.
+- **A hidden latch in the ALU**, found during synthesis (section 3.3).
+
+---
+
+## 3. Logic synthesis: from code to logic gates
 
 **What it is.** Synthesis reads the SystemVerilog and builds a circuit from the **standard cells** of the sky130 library (`sky130_fd_sc_hd`). A standard cell is a small, pre-drawn gate such as a NAND, a flip-flop or a multiplexer. Yosys does this in two phases:
 
@@ -119,6 +156,8 @@ make sim   # Icarus and Verilator, on src/rtl and src/rtl_synth
 2. It **maps** that logic to real library cells (ABC picks the gates, `dfflibmap` picks the flip-flops), using the cell timing and area from the Liberty file `sky130_fd_sc_hd__tt_025C_1v80.lib`.
 
 **Why it matters.** This is where your code becomes hardware. The cells chosen here decide most of the area and much of the speed.
+
+### 3.1 Two small examples
 
 **Small example 1: the 4-to-1 mux (`mux4`, with WIDTH = 1).** First Yosys sees the `case` statement as generic logic: three comparisons of `select` and a parallel mux (`$pmux`):
 
@@ -131,6 +170,8 @@ After mapping to sky130, the whole thing becomes **one** library cell, `sky130_f
 **Small example 2: a 2-bit register (`register_bank`, with WIDTH = 2).** Each bit becomes a `dfrtp` flip-flop (a D flip-flop with active-low reset, so the reset goes through an inverter) and a `mux2` that either keeps the old value or loads a new one when `wr_en = 1`:
 
 ![Yosys schematic of a 2-bit register: dfrtp flip-flops, mux2 enable muxes, clkinv on reset](docs/img/06_yosys_regbank_gates.png)
+
+### 3.2 Quality of results (QoR)
 
 **Commands and settings:**
 
@@ -146,9 +187,23 @@ make flow    # the full flow; its synthesis uses "SYNTH_STRATEGY": "DELAY 1" fro
 
 The delay-oriented run is about 50 % larger, because it uses bigger, faster gates. That is the usual **area-versus-speed trade-off**.
 
+Where does the area go? A separate, non-flattened Yosys run (made only for this figure, so its total of 1,003 cells is close to but not the same as the runs above) shows that the **memory** (8 × 16 flip-flops with write enable) and the **ALU** (adder, subtractor, multiplier and divider) take about 78 % of its 10,695.3 µm²:
+
+![Cell area per module from a hierarchical Yosys run](docs/img/31_area_by_module.png)
+
+### 3.3 The ALU latch
+
+With the original `src/rtl/alu.sv`, Yosys stops with:
+
+```text
+ERROR: Latch inferred for signal `\ALU.\out' from always_comb process ...
+```
+
+The `always_comb` block does not assign `out` for every opcode, so the hardware must *remember* the old value, which needs a latch. That is not what `always_comb` promises. The fix in `src/rtl_synth/alu.sv` is one line, a default `out = '0;` at the top of the block (section 1). Lesson: in combinational code, give every output a value on every path.
+
 ---
 
-## 4. Floorplan: how big is the chip?
+## 4. Physical design: floorplan
 
 **What it is.** The floorplan sets the size of the **die** (the whole chip) and the **core** (the inner area where cells go), and fills the core with **rows**. Every standard cell in sky130_fd_sc_hd is the same height (one row, 2.72 µm), so cells sit in rows like books on shelves.
 
@@ -176,7 +231,7 @@ The input and output pins are placed around the edge in a later step (`25-openro
 
 ---
 
-## 5. Power grid: getting power to every cell
+## 5. Physical design: power grid
 
 **What it is.** The power distribution network (PDN) is a grid of metal that carries VPWR (1.8 V) and VGND (0 V) to every cell. In this design (from the run's resolved configuration):
 
@@ -195,7 +250,7 @@ Zoomed in on the top-left corner, you can see the met1 rails along the rows, the
 
 ---
 
-## 6. Placement: where does each gate go?
+## 6. Physical design: placement
 
 **What it is.** Placement gives every logic cell (about 1,650 in the final layout) a location in the rows. It happens in two phases:
 
@@ -230,7 +285,7 @@ Coloured by cell type (from the final database), the 173 flip-flops (red) sit mo
 
 ---
 
-## 7. Clock tree synthesis: one clock, everywhere at once
+## 7. Physical design: clock tree synthesis (CTS)
 
 **What it is.** The `clk` pin has to drive all **173 flip-flops**. One wire cannot do that: it would be far too slow and the clock edge would reach each flip-flop at a different time (**skew**). Clock tree synthesis (TritonCTS, step `35-openroad-cts`) builds a tree of clock buffers instead.
 
@@ -240,9 +295,13 @@ For this design (read from the post-CTS database): the `clk` pin drives a root b
 
 **Why it matters.** Skew eats into your timing budget. After CTS the timing tool uses the real clock arrival times, not ideal ones. The `metrics.json` file reports a worst setup skew of 0.518 ns and a hold slack of **+0.453 ns**, so there are no hold violations.
 
+After CTS, the **pin density** map shows where many cell pins crowd together; those spots are harder to route:
+
+![Pin density heat map after CTS](docs/img/32_cts_pin_density.png)
+
 ---
 
-## 8. Routing: drawing the wires
+## 8. Physical design: routing
 
 **What it is.** Routing turns every logical connection into real metal. sky130 has a local-interconnect layer (li1) and five metal layers (met1–met5), and this flow may route on met1 to met5 (`RT_MIN_LAYER`, `RT_MAX_LAYER`). Routing happens in two phases:
 
@@ -262,7 +321,7 @@ Close up (about 12 × 9 µm), you can see horizontal and vertical wires on diffe
 
 ---
 
-## 9. Fill and the final GDS
+## 9. Physical design: fill and the final GDS
 
 **What it is.** The empty gaps in the rows are filled with **fill** and **decap** cells (decaps are small capacitors that steady the supply). Then the layout is written as **GDSII**: polygons on numbered layers, which is what the mask shop uses. Magic and KLayout both write a GDS, and LibreLane compares the two (**XOR**). Here they match exactly.
 
@@ -288,23 +347,41 @@ klayout runs/final_5ns/final/gds/top.gds   # open the GDS yourself
 
 ---
 
-## 10. Sign-off: timing, power, DRC, LVS
+## 10. Timing convergence: from synthesis to sign-off
+
+The flow measures timing several times as the design becomes more real. Each STA step in the run writes WNS and TNS (from `state_out.json` of steps `*-openroad-staprepnr`, `*-openroad-stamidpnr*` and `*-openroad-stapostpnr`):
+
+![Setup WNS and TNS at each stage of the 5 ns run](docs/img/33_timing_convergence.png)
+
+How to read it:
+
+- **After synthesis** the clock is ideal and there are no wires yet, and WNS is already −2.811 ns.
+- **After placement and CTS**, real distances and a real clock tree make it worse (−3.788 and −3.861 ns).
+- **The post-CTS resizer** swaps in bigger gates and adds buffers on the slow paths, which helps a lot (−1.096 ns).
+- **After global routing** the wire estimates get more realistic (−1.235 ns).
+- **Sign-off** uses the real extracted wires (SPEF) and ends at **−1.506 ns**.
+
+The repairs cost area, because every added buffer or bigger gate takes space (section 11.2 shows the final mix). Timing that looks fine early in the flow can still fail at sign-off, which is why you check it at every stage.
+
+---
+
+## 11. Sign-off: timing, power, DRC, LVS
 
 Sign-off asks four questions. Is the chip fast enough? How much power does it use? Does it obey the factory's rules? Does the layout match the netlist?
 
-### 10.1 Gate-level simulation
+### 11.1 Gate-level simulation
 
 The same two testbenches are run on the **final routed netlist** (`make gls`). The outputs match the RTL simulation exactly: **tb_light 16/16 and tb_nop 19/19, 35/35 checks.** (The netlist is flattened, so internal signals such as the FSM state are no longer visible by name.)
 
 ![Gate-level simulation of the final netlist: same outputs as RTL](docs/img/24_gls_waveform.png)
 
-### 10.2 What ended up on the chip
+### 11.2 What ended up on the chip
 
 ![Instance count and area by cell type in the final layout](docs/img/25_cell_composition.png)
 
 The final layout has 5,441 instances. About 1,650 of them are logic cells (gates, flip-flops, buffers, inverters and the clock buffers). The rest are tap, end-cap, fill and decap cells.
 
-### 10.3 Static timing analysis (STA)
+### 11.3 Static timing analysis (STA)
 
 **What it is.** OpenSTA adds up the delay of every gate and wire on every path between flip-flops, using the real wire parasitics extracted by OpenRCX (a SPEF file). It compares each path with the clock period. **Slack** = required time − arrival time. A positive slack means the path is fast enough; a negative one means it is too slow.
 
@@ -330,9 +407,17 @@ Endpoint: _2507_ (rising edge-triggered flip-flop clocked by clk)
                   -1.506   slack (VIOLATED)
 ```
 
+Drawn on the layout, the same path wanders across the chip. Each long hop is a long wire, and long wires add delay:
+
+![The worst path drawn on the final placement](docs/img/34_critical_path_layout.png)
+
+And in time, each bar is one cell's delay. You can see where the 6.459 ns go:
+
+![The worst path as a timeline of cell delays](docs/img/35_critical_path_time.png)
+
 **Lesson:** a single-cycle 8-bit multiplier and divider is too much logic for 5 ns in this flow. The 8 ns run ([`config_8ns.json`](config_8ns.json)) comes much closer: WNS **−0.437 ns**, 2 violating endpoints. The real fix is architectural: pipeline the MUL/DIV over several cycles, or relax the clock. **Hold** timing passes in both runs (+0.453 ns).
 
-### 10.4 Power
+### 11.4 Power
 
 Using switching activity from the `tb_light` gate-level simulation (VCD), OpenSTA reports **3.74 mW** at 5 ns ([`reports/final_5ns/power_vcd.rpt`](reports/final_5ns/power_vcd.rpt)). Flip-flops use the most, and the clock tree alone uses about a quarter:
 
@@ -340,13 +425,13 @@ Using switching activity from the `tb_light` gate-level simulation (VCD), OpenST
 
 Without a VCD, OpenSTA assumes a default activity and reports 6.14 mW. Real activity matters!
 
-### 10.5 IR drop
+### 11.5 IR drop
 
 OpenROAD's power-grid analyzer (PSM, step `57-openroad-irdropreport`) solves the grid as a resistor network. With default activity, the worst drop on VPWR is **1.57 mV** (0.09 % of 1.8 V) and on VGND **1.18 mV**. The grid in section 5 is more than strong enough for this small design.
 
 ![Static IR-drop map of VPWR](docs/img/28_ir_drop_vpwr.png)
 
-### 10.6 Physical verification: DRC, LVS, antenna and XOR
+### 11.6 Physical verification: DRC, LVS, antenna and XOR
 
 | Check | What it asks | Tool | Result |
 |---|---|---|---|
@@ -357,13 +442,33 @@ OpenROAD's power-grid analyzer (PSM, step `57-openroad-irdropreport`) solves the
 
 (These come from `metrics.json`: `magic__drc_error__count`, `klayout__drc_error__count`, `design__lvs_error__count`, `antenna__violating__nets`, `antenna__violating__pins` and `design__xor_difference__count`.) There are no DRC markers to show in a picture, because there are none.
 
-### 10.7 Formal equivalence (optional)
+### 11.7 Formal equivalence (optional)
 
 `make eqy` tries to *prove* that the RTL and the final netlist are the same logic. It is only partly successful: 51 partitions, 167 matched comparison points, **32 PASS**, **19 UNKNOWN** (not proven either way). Functional confidence rests on the 35/35 gate-level checks above.
 
 ---
 
-## 11. Results summary
+## 12. Design-space exploration: power, performance and area (PPA)
+
+**PPA** is the triangle every chip designer balances: **P**ower, **P**erformance (speed) and **A**rea. Ten LibreLane variants were tried (synthesis strategy, fanout limits, Booth multiplier, buffering and clock period) and logged in [`reports/librelane_experiments.csv`](reports/librelane_experiments.csv):
+
+![WNS versus area for the ten LibreLane trials](docs/img/36_design_space.png)
+
+At 5 ns, no setting closes timing. The best WNS at 5 ns was `tuned_5ns` (−1.351 ns), but `rt_d1` (−1.506 ns) had a much better TNS (−7.527 against −11.59 ns) and was kept as the final configuration. Relaxing the clock helps most: 7 ns gives −0.38 ns and 8 ns gives −0.437 ns, each with a different variant. A clean sweep of the clock period (the same settings at 3, 4, 5, 6, 8, 10 … ns, with power and energy per cycle) has not been run yet; see exercise 2.
+
+---
+
+## 13. Summary
+
+- **The complete open-source flow ran end to end:** Icarus/Verilator → Yosys → OpenROAD (floorplan, PDN, placement, CTS, routing) → OpenRCX → OpenSTA → Magic/KLayout/Netgen, on sky130A.
+- **It is functionally correct and physically clean:** 35/35 gate-level checks, and 0 DRC, LVS, antenna and XOR errors.
+- **It does not meet 200 MHz:** at 5 ns, WNS is −1.506 ns. The bottleneck is the single-cycle multiply/divide logic (sections 11.3 and 12).
+- **Size and power:** die 36,511.5 µm², 3.74 mW with real activity at 5 ns.
+- **Next steps:** pipeline MUL/DIV, run a clean clock-period sweep, and measure coverage.
+
+---
+
+## 14. Results tables
 
 All numbers are for the typical corner `nom_tt_025C_1v80`. The 5 ns target (200 MHz) is not met. The 8 ns run is closer, but still has a small setup violation.
 
@@ -410,7 +515,31 @@ All of the following printed `TEST PASS`:
 
 ---
 
-## 12. Try it yourself
+## 15. Limitations, common errors and fixes
+
+**Limitations of this version**
+
+- Setup timing is not met at 5 ns or 8 ns.
+- Only the typical corner (`nom_tt_025C_1v80`) is analysed (`STA_CORNERS` in `config.json`). A real sign-off also checks the slow and fast corners.
+- Formal equivalence is partial (19 UNKNOWN partitions).
+- Code coverage was not measured.
+- IR drop was computed with default activity, not with the VCD.
+- The design is a hard block with pins, not a full chip with I/O pads.
+
+**Errors you may hit, and what fixed them here**
+
+| Error or symptom | Cause | Fix |
+|---|---|---|
+| Yosys: `Latch inferred for signal \ALU.\out` (and, in the flow, a combinational loop) | `always_comb` does not assign `out` for every opcode | Default `out = '0;` (`scripts/prep_rtl.sh` → `src/rtl_synth/`) |
+| `make pdk` fails with HTTP 500 | The default PDK mirror is down | The Makefile already uses `--data-source github-releases:…` |
+| GLS does not compile: no parameter `WIDTH` on `top` | The final netlist is flattened and has no parameters | `scripts/run_gls.sh` drops `#(.WIDTH(WIDTH))` from the testbench copy |
+| EQY cannot match the FSM state bits | Synthesis re-encodes the FSM as one-hot | `scripts/eqy_template.eqy` applies the same recoding to the RTL side |
+| STA inside `openroad` fails to link cells | OpenROAD needs the LEF (or an `.odb`) before the Liberty | Read the `.odb` first (`docs/scripts/sta_endpoints.tcl`), or use the standalone `sta` binary |
+| Timing still fails after changing ABC options | The long path is in the architecture (MUL/DIV), not in the tool settings | Pipeline or relax the clock (section 12) |
+
+---
+
+## 16. Try it yourself
 
 ### Set up and run the whole flow
 
@@ -445,15 +574,16 @@ Swap in any stage folder: `13-openroad-floorplan`, `21-openroad-generatepdn`, `3
 ### Exercises
 
 1. **Write a new test.** Add a `run_op` call to `tb_light.sv` for `SUB 5-10`. What 16-bit value do you expect? (Hint: two's complement.) Run `make sim`.
-2. **Change the clock.** Run `make flow TAG=final_8ns CONFIG=config_8ns.json`, then try 10 ns yourself. At what period does WNS become positive? How do the area and power change?
+2. **Sweep the clock.** Run `make flow TAG=final_8ns CONFIG=config_8ns.json`, then copy `config.json` and try 4, 6 and 10 ns yourself. At what period does WNS become positive? How do the area and power change?
 3. **Change the utilization.** Set `"FP_CORE_UTIL": 35` or `65`. What happens to the die size, the wirelength and the routing congestion map?
 4. **Find the critical path.** Open `docs/critical_path_5ns.txt`. Which gates add the most delay? How many are buffers (`rebuffer*`) that the tool added?
 5. **Pipeline the ALU.** Split MUL/DIV over two cycles (this also needs a change in the FSM), rerun the testbenches, then rerun the flow at 5 ns.
 6. **Compare synthesis strategies.** Change `SYNTH_STRATEGY` to `"AREA 0"` and compare the cell area and WNS with the trials in `reports/librelane_experiments.csv`.
+7. **Measure coverage.** Build `tb_nop` with Verilator using `--coverage`, run it, and read the result with `verilator_coverage`. Which lines and FSM transitions are never exercised?
 
 ---
 
-## 13. How the figures were made
+## 17. How the figures were made
 
 Every image in [`docs/img/`](docs/img/) is generated from this design's own open-source flow outputs by [`docs/scripts/make_figures.sh`](docs/scripts/make_figures.sh):
 
@@ -466,44 +596,63 @@ Every image in [`docs/img/`](docs/img/) is generated from this design's own open
 | Clock tree and cell-type views | `.odb` exported with OpenROAD's Python API (`docs/scripts/export_odb.py`), plotted with matplotlib |
 | Final GDS and standard cell | KLayout in batch mode (`docs/scripts/kl_render.py`, `kl_cell.py`) |
 | Slack histogram, power and IR drop | OpenSTA and OpenROAD reports, plotted with matplotlib (`docs/scripts/plot_reports.py`) |
+| Timing convergence, critical path on the layout and in time, trials, area per module | Flow metrics, OpenSTA path report, `.odb` geometry and a hierarchical Yosys run (`docs/scripts/plot_extras.py`) |
 
 The standard-cell picture is drawn from the sky130 library GDS in the PDK (Apache-2.0, SkyWater/Google), which `make pdk` downloads. It is not included in this repository.
 
 ---
 
-## 14. Glossary
+## 18. Glossary
+
+### Design and verification
+
+| Term | Meaning |
+|---|---|
+| **Coverage** | How much of the design the tests exercised: lines, branches, conditions, toggles, FSM states and transitions. |
+| **FSM** | Finite-state machine: the controller that steps through RST, FETCH, EXECUTE and STORE. |
+| **GLS** | Gate-level simulation: simulating the synthesized or routed netlist instead of the RTL. |
+| **Latch (inferred)** | Memory created by accident when combinational code does not assign an output in every case. |
+| **RTL** | Register-transfer level: hardware described as registers and the logic between them (here, SystemVerilog). |
+| **Self-checking testbench** | A testbench that compares outputs with expected values and prints PASS or FAIL by itself. |
+| **VCD** | Value change dump: a waveform file from simulation. Here it is also used for power analysis. |
+
+### Simulation, synthesis and power
 
 | Term | Meaning |
 |---|---|
 | **ABC** | The logic optimizer inside Yosys that maps logic to library gates. |
+| **IR drop** | The voltage lost across the resistance of the power grid (V = I × R). |
+| **Liberty (.lib)** | A file with the timing, power and function of each standard cell at one corner. |
+| **Netlist** | A list of cells and the wires (nets) that connect them. |
+| **PDK** | Process design kit: everything the foundry provides to design for its process (cells, rules, models). sky130A is open source. |
+| **PPA** | Power, performance and area: the three quantities a design trades against each other. |
+| **QoR** | Quality of results: the area, timing and power a tool achieved. |
+| **SDC** | The standard Tcl-based constraints format for clocks, input and output delays and loads. |
+| **Standard cell** | A pre-designed gate (NAND, flip-flop, mux and so on) of fixed height that fits in a row. |
+
+### Physical design and sign-off
+
+| Term | Meaning |
+|---|---|
 | **Antenna effect** | Charge that collects on a long metal wire during manufacturing and can damage a transistor gate. Fixed with diodes or by changing layers. |
+| **Clock-to-Q** | The delay from a clock edge to the flip-flop output changing. |
 | **CTS** | Clock tree synthesis: building a buffer tree so the clock reaches every flip-flop at nearly the same time. |
+| **Decap / fill** | Cells that fill empty row space. Decaps also add capacitance that steadies the supply. |
 | **DEF / ODB** | Files that describe a placed and routed design. DEF is text; ODB is OpenROAD's database. |
 | **Die / core** | The die is the whole chip rectangle. The core is the inner area where standard cells are placed. |
 | **DRC** | Design rule check: are all the shapes legal for the factory? |
-| **Decap / fill** | Cells that fill empty row space. Decaps also add capacitance that steadies the supply. |
-| **FSM** | Finite-state machine: the controller that steps through RST, FETCH, EXECUTE and STORE. |
 | **GDSII** | The final layout file format: polygons on numbered layers. |
-| **GLS** | Gate-level simulation: simulating the synthesized or routed netlist instead of the RTL. |
 | **Hold time / setup time** | A flip-flop's data must be stable for some time *before* the clock edge (setup) and *after* it (hold). |
-| **IR drop** | The voltage lost across the resistance of the power grid (V = I × R). |
-| **Latch (inferred)** | Memory created by accident when combinational code does not assign an output in every case. |
 | **LEF** | A file with the size, pins and blockages of each cell and the routing layers, used by place and route. |
-| **Liberty (.lib)** | A file with the timing, power and function of each standard cell at one corner. |
 | **LVS** | Layout versus schematic: does the layout implement exactly the netlist? |
-| **Netlist** | A list of cells and the wires (nets) that connect them. |
-| **PDK** | Process design kit: everything the foundry provides to design for its process (cells, rules, models). sky130A is open source. |
+| **Path group** | A set of timing paths reported together, e.g. register-to-register, or the asynchronous reset paths. |
 | **PDN** | Power distribution network: the metal grid for VPWR and VGND. |
-| **RTL** | Register-transfer level: hardware described as registers and the logic between them (here, SystemVerilog). |
-| **SDC** | The standard Tcl-based constraints format for clocks, input and output delays and loads. |
 | **Skew** | The difference in clock arrival time between two flip-flops. |
 | **Slack, WNS, TNS** | Slack = required − arrival time. WNS is the worst slack; TNS is the sum of all negative slacks. |
 | **SPEF** | A file with the resistance and capacitance of every routed wire, used by STA. |
-| **Standard cell** | A pre-designed gate (NAND, flip-flop, mux and so on) of fixed height that fits in a row. |
 | **STA** | Static timing analysis: checking every path's delay without simulation. |
 | **Tap cell** | A cell that connects the transistor wells to power and ground, which prevents latch-up. |
 | **Utilization** | The fraction of the core area covered by cells. |
-| **VCD** | Value change dump: a waveform file from simulation. Here it is also used for power analysis. |
 | **Via** | A vertical connection between two metal layers. |
 | **XOR check** | A comparison of two GDS files, shape by shape. |
 

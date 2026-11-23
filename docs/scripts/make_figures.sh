@@ -22,12 +22,17 @@ dot -Tpng -Gdpi=110 docs/diagrams/fsm.dot          -o "$TMP/02_fsm.png"
 echo "== waveforms (VCD -> matplotlib)"
 python3 "$S/plot_waves.py" "$SIM/rtl/iverilog/tb_light/tb_cpu.vcd" "$TMP/03_rtl_waveform.png" "RTL simulation (Icarus Verilog), tb_light: first instructions" 100
 python3 "$S/plot_waves.py" "$SIM/gls_final_5ns/tb_light/tb_cpu.vcd" "$TMP/24_gls_waveform.png" "Gate-level simulation of the final routed netlist (Icarus), tb_light: same inputs, same results" 100
+python3 "$S/plot_waves.py" "$SIM/rtl/iverilog/tb_light/tb_cpu.vcd" "$TMP/29_wave_add.png" "Zoom on one instruction: ADD 10 + 20 (cmdin 0001000), result 0x001e after FETCH, EXECUTE, STORE" 25 10
+python3 "$S/plot_waves.py" "$SIM/rtl/iverilog/tb_light/tb_cpu.vcd" "$TMP/30_wave_div0.png" "Zoom on DIV 10 / 0 (cmdin 0001011): result 0xffff and error = 1" 100 85
 
 echo "== synthesis schematics (yosys show)"
 LIB=$LIB SRC=$ROOT/src/rtl_synth OUT=$TMP yosys -q -c "$S/yosys_show.tcl" > /dev/null
 dot -Tpng -Gdpi=100 -Grankdir=LR "$TMP/yosys_mux4_rtl.dot"     -o "$TMP/04_yosys_mux4_rtl.png"
 dot -Tpng -Gdpi=100 -Grankdir=LR "$TMP/yosys_mux4_gates.dot"   -o "$TMP/05_yosys_mux4_gates.png"
 dot -Tpng -Gdpi=100 -Grankdir=LR "$TMP/yosys_regbank_gates.dot" -o "$TMP/06_yosys_regbank_gates.png"
+
+# hierarchical (not flattened) synthesis, only to measure area per module
+yosys -q -p "read_verilog -sv $(ls src/rtl_synth/*.sv | tr '\n' ' '); synth -top top; dfflibmap -liberty $LIB; abc -liberty $LIB; opt_clean; tee -o $TMP/hier_stat.txt stat -liberty $LIB" > /dev/null
 
 echo "== OpenROAD stage screenshots"
 SB='"Misc/Scale bar" true'; NOPG=('"Nets/Power" false' '"Nets/Ground" false')
@@ -39,6 +44,7 @@ shot "$(st openroad-globalplacement)/top.odb"                        "$TMP/11_gl
 shot "$(st openroad-globalplacement)/top.odb"                        "$TMP/12_placement_density.png" "${NOPG[@]}" '"Heat Maps/Placement Density" true' "$SB"
 shot "$(st openroad-detailedplacement)/top.odb"                      "$TMP/13_detailed_placement.png" "${NOPG[@]}" "$SB"
 AREA="70 70 95 88" shot "$(st openroad-detailedplacement)/top.odb"   "$TMP/14_detailed_placement_zoom.png" "${NOPG[@]}" '"Misc/Instances/Names" true' "$SB"
+shot "$(st openroad-cts)/top.odb"                                    "$TMP/32_cts_pin_density.png" "${NOPG[@]}" '"Heat Maps/Pin Density" true' "$SB"
 shot "$(st openroad-globalrouting)/top.odb"                          "$TMP/17_global_route_congestion.png" "${NOPG[@]}" '"Heat Maps/Routing Congestion" true' "$SB"
 shot "$(st openroad-detailedrouting)/top.odb"                        "$TMP/18_detailed_routing.png" "$SB"
 AREA="74 74 86 83" W=1200 shot "$(st openroad-detailedrouting)/top.odb" "$TMP/19_detailed_routing_zoom.png" "$SB"
@@ -61,6 +67,9 @@ RUN=$RUN OUT=$TMP openroad -no_init -exit "$S/sta_endpoints.tcl" | grep -E "^(wn
 python3 "$S/plot_reports.py" "$TMP/endpoints_max.txt" reports/final_5ns/power_vcd.rpt "$(st openroad-irdropreport)/net-VPWR.csv" "$TMP"
 mv "$TMP/timing_slack_histogram.png" "$TMP/26_timing_slack_histogram.png"; mv "$TMP/power_breakdown.png" "$TMP/27_power_breakdown.png"; mv "$TMP/ir_drop_vpwr.png" "$TMP/28_ir_drop_vpwr.png"
 cp "$TMP/critical_path.txt" "$IMG/../critical_path_5ns.txt"
+python3 "$S/plot_extras.py" "$RUN" "$TMP/final.json" "$TMP/critical_path.txt" reports/librelane_experiments.csv "$TMP/hier_stat.txt" "$TMP"
+mv "$TMP/area_by_module.png" "$TMP/31_area_by_module.png"; mv "$TMP/timing_convergence.png" "$TMP/33_timing_convergence.png"
+mv "$TMP/critical_path_layout.png" "$TMP/34_critical_path_layout.png"; mv "$TMP/critical_path_time.png" "$TMP/35_critical_path_time.png"; mv "$TMP/design_space.png" "$TMP/36_design_space.png"
 
 echo "== shrink and copy to docs/img"
 python3 - "$TMP" "$IMG" <<'EOF'
