@@ -112,7 +112,7 @@ From `reports/yosys_standalone/stat_tt.rpt`: **10 188.5 µm²**, **1 004** cells
 
 ## Notes
 
-- Timing is limited by a long combinational path through the multiplier and divider. Pipelining MUL/DIV, or relaxing the period toward ~6.5–7 ns, would be the natural next step in this open flow.
+- Timing is limited by a long combinational path through the multiplier and divider. Pipelining MUL/DIV, or relaxing the clock period beyond 8 ns, would be the natural next step in this open flow.
 - `constraints/top.sdc` uses `CLOCK_PERIOD` from the LibreLane config, so the same file serves both the 5 ns and 8 ns runs.
 
 ## Credits
