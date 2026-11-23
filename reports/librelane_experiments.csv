@@ -1,0 +1,11 @@
+run,period_ns,variant,WNS_ns,TNS_ns,hold_WS_ns,logic_area_um2,magic_drc,klayout_drc,lvs_errors
+rt5ns,5,"AREA 0 (default), heuristic diodes",-4.442,-27.399,0.401,14749.1,0,0,0
+rt_d1,5,DELAY 1 + post-GRT repair,-1.506,-7.527,0.453,18894.3,0,0,0
+rt_d3,5,DELAY 3 + post-GRT repair,-2.017,-10.594,0.46,17399.2,0,0,0
+rt_d4,5,DELAY 4 + post-GRT repair + 100% buffers,-3.185,-20.468,0.387,18296.3,0,0,0
+r5_fo,5,DELAY 1 + set_max_fanout 10,-1.61,-22.862,0.402,20594.8,0,0,0
+r5_booth,5,DELAY 1 + max_fanout 10 + Booth + 100% buffers,-1.892,-23.434,0.386,20116.8,0,0,0
+r7_fo,7,DELAY 1 + max_fanout 10 @ 7 ns,-0.38,-1.618,0.404,18926.9,0,0,0
+tuned_5ns,5,DELAY 1 + ABC buffering + 100% buffers,-1.351,-11.59,0.499,19576.2,0,0,0
+final_5ns,5,FINAL: DELAY 1 + post-GRT repair (config.json),-1.506,-7.527,0.453,18894.3,0,0,0
+final_8ns,8,DELAY 1 + post-GRT repair @ 8 ns (config_8ns.json),-0.437,-0.751,0.453,16343.2,0,0,0

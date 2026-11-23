@@ -1,0 +1,28 @@
+{
+  "DESIGN_NAME": "top",
+  "VERILOG_FILES": [
+    "dir::src/rtl_synth/alu.sv",
+    "dir::src/rtl_synth/control.sv",
+    "dir::src/rtl_synth/memory.sv",
+    "dir::src/rtl_synth/mux4.sv",
+    "dir::src/rtl_synth/register_bank.sv",
+    "dir::src/rtl_synth/top.sv"
+  ],
+  "CLOCK_PORT": "clk",
+  "CLOCK_PERIOD": 8.0,
+  "PNR_SDC_FILE": "dir::constraints/top.sdc",
+  "SIGNOFF_SDC_FILE": "dir::constraints/top.sdc",
+  "FP_SIZING": "relative",
+  "FP_CORE_UTIL": 50,
+  "PL_TARGET_DENSITY_PCT": 60,
+  "STA_CORNERS": [
+    "nom_tt_025C_1v80"
+  ],
+  "LINTER_ERROR_ON_LATCH": false,
+  "SYNTH_STRATEGY": "DELAY 1",
+  "RUN_POST_GRT_RESIZER_TIMING": true,
+  "meta": {
+    "version": 3,
+    "flow": "Classic"
+  }
+}

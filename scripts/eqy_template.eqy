@@ -1,0 +1,30 @@
+# Formal equivalence: RTL (gold) vs final gate netlist, using Yosys EQY.
+# scripts/run_eqy.sh fills in @NETLIST@ and @PDKV@.
+[gold]
+read_verilog -formal -sv src/rtl_synth/alu.sv src/rtl_synth/control.sv src/rtl_synth/memory.sv src/rtl_synth/mux4.sv src/rtl_synth/register_bank.sv src/rtl_synth/top.sv
+hierarchy -top top
+proc
+flatten
+opt_clean
+# Apply the same one-hot FSM recoding that synthesis uses, so state bits match.
+fsm
+prep -top top
+memory
+async2sync
+# The place-and-route netlist has 1-bit nets (e.g. "ALU_inst.in2[1]"); split gold the same way.
+splitnets
+
+[gate]
+read_verilog -formal -sv @PDKV@ @NETLIST@
+hierarchy -top top
+proc
+prep -top top -flatten
+async2sync
+
+[strategy sat]
+use sat
+depth 5
+
+[strategy pdr]
+use sby
+engine abc pdr -rfi
